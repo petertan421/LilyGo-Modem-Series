@@ -9,6 +9,8 @@ TinyGsm modem(SerialAT);
 #define SerialMon Serial
 
 char number[] = "+14374324422"; // Change the number you want to dial
+bool isButtonPressed = false;   // use this to track the calling state
+String modemResponse;
 
 void setup()
 {
@@ -16,6 +18,7 @@ void setup()
     Serial.begin(115200);
     pinMode(LED_PIN, OUTPUT);
     gpio_set_drive_capability((gpio_num_t)LED_PIN, GPIO_DRIVE_CAP_0);
+    analogWrite(LED_PIN, 30); 
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(BOARD_POWERON_PIN, OUTPUT);
     pinMode(MODEM_RESET_PIN, OUTPUT);
@@ -54,7 +57,9 @@ void configureModem()
     modem.sendAT("+SIMTONE=1,1421,200,200,1000"); // play tone to indicate modem is ready
     delay(2000);
     // puts modem to sleep
-    digitalWrite(MODEM_DTR_PIN, HIGH);
+    modem.poweroff();
+    delay(5000); // wait for modem to power off
+    analogWrite(LED_PIN, 0); // Turn off LED
 }
 
 void playAlertSound()
@@ -72,33 +77,58 @@ void makeCall()
     modem.callNumber(number);
 }
 
+void wakeModem()
+{
+    pinMode(BOARD_PWRKEY_PIN, OUTPUT);
+    digitalWrite(BOARD_PWRKEY_PIN, LOW);
+    delay(100);
+    digitalWrite(BOARD_PWRKEY_PIN, HIGH);
+    delay(MODEM_POWERON_PULSE_WIDTH_MS);
+    digitalWrite(BOARD_PWRKEY_PIN, LOW);
+    delay(10000);
+}
+
+void checkCallStatus()
+{
+    while (SerialAT.available())
+    {
+        modemResponse += (char)SerialAT.read();
+
+        if (modemResponse.indexOf("VOICE CALL: END") >= 0)
+        {
+            Serial.println("Call ended.");
+            modem.poweroff();
+            delay(5000); // wait for modem to power off
+            analogWrite(LED_PIN, 0); // Turn off LED
+            isButtonPressed = false;
+            modemResponse = "";
+            return;
+        }
+
+        if (modemResponse.length() > 64)
+        {
+            modemResponse.remove(0, modemResponse.length() - 32);
+        }
+    }
+}
+
 void loop()
 {
-    // check if call is done, if so, put modem to sleep
-    // modem will send "VOICE CALL: END" when call is done
-    // use digitalWrite(MODEM_DTR_PIN, HIGH); to put modem to sleep
-    //analogWrite(LED_PIN, 0); // Turn off LED
-    //analogWrite(LED_PIN, 30); // 30 out of 255 restricts the brightness to not burn LED
 
     if (digitalRead(BUTTON_PIN) == LOW)
     {
-        
+        if (!isButtonPressed)
+        {
+            analogWrite(LED_PIN, 30); // 30 out of 255 restricts the brightness to not burn LED
+            Serial.println("Waking modem and dialing...");
+            wakeModem();
+            makeCall();
+            isButtonPressed = true;
+        }
     }
-    else
+
+    if (isButtonPressed)
     {
-        
+        checkCallStatus();
     }
-    // if (digitalRead(MODEM_RING_PIN) == LOW)
-    // {
-    //     Serial.println("Incoming call...");
-    // }
-    // if (SerialAT.available())
-    // {
-    //     Serial.write(SerialAT.read());
-    // }
-    // if (Serial.available())
-    // {
-    //     SerialAT.write(Serial.read());
-    // }
-    // delay(1);
 }
