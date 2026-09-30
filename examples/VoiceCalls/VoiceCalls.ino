@@ -54,7 +54,7 @@ void configureModem()
     modem.sendAT("+CSDVC=3");
     modem.sendAT("+COUTGAIN=7");
     modem.sendAT("+CMICGAIN=7");
-    modem.sendAT("+SIMTONE=1,1421,200,200,1000"); // play tone to indicate modem is ready
+    modem.sendAT("+SIMTONE=1,1421,200,200,200"); // play tone to indicate modem is ready
     delay(2000);
     // puts modem to sleep
     modem.poweroff();
@@ -68,7 +68,7 @@ void playAlertSound()
     modem.sendAT("+CCMXPLAY=\"C:/music.mp3\",0,", repeat);
     delay(8000);
     modem.sendAT("+SIMTONE=1,1421,200,800,10000");
-    delay(10000); // phone calls will interrupt playback if the playback is unfinished.
+    delay(5000); // phone calls will interrupt playback if the playback is unfinished.
 }
 
 void makeCall()
@@ -94,7 +94,7 @@ void checkCallStatus()
     {
         modemResponse += (char)SerialAT.read();
 
-        if (modemResponse.indexOf("VOICE CALL: END") >= 0)
+        if (modemResponse.indexOf("VOICE CALL: END: 000001") >= 0)
         {
             Serial.println("Call ended.");
             modem.poweroff();
