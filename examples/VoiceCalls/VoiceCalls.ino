@@ -9,8 +9,11 @@ TinyGsm modem(SerialAT);
 #define SerialMon Serial
 
 char number[] = "+14374324422"; // Change the number you want to dial
-bool isButtonPressed = false;   // use this to track the calling state
-String modemResponse;
+bool callInProgress = false;
+bool activeCallSeen = false;
+bool buttonWasPressed = false;
+uint8_t emptyCallPolls = 0;
+uint32_t lastCallPoll = 0;
 
 void setup()
 {
@@ -51,10 +54,9 @@ void configureModem()
     }
     delay(10000);
     Serial.print("Modem configured.");
-    modem.sendAT("+CSDVC=3");
-    modem.sendAT("+COUTGAIN=7");
-    modem.sendAT("+CMICGAIN=7");
+    configureAudio();
     modem.sendAT("+SIMTONE=1,1421,200,200,200"); // play tone to indicate modem is ready
+    modem.waitResponse(1000);
     delay(2000);
     // puts modem to sleep
     modem.poweroff();
@@ -62,19 +64,31 @@ void configureModem()
     analogWrite(LED_PIN, 0); // Turn off LED
 }
 
+void configureAudio()
+{
+    modem.sendAT("+CSDVC=3");
+    modem.waitResponse(1000);
+    modem.sendAT("+COUTGAIN=7");
+    modem.waitResponse(1000);
+    modem.sendAT("+CMICGAIN=7");
+    modem.waitResponse(1000);
+}
+
 void playAlertSound()
 {
     uint8_t repeat = 0;
     modem.sendAT("+CCMXPLAY=\"C:/music.mp3\",0,", repeat);
+    modem.waitResponse(1000);
     delay(8000);
     modem.sendAT("+SIMTONE=1,1421,200,800,10000");
+    modem.waitResponse(1000);
     delay(5000); // phone calls will interrupt playback if the playback is unfinished.
 }
 
-void makeCall()
+bool makeCall()
 {
     playAlertSound();
-    modem.callNumber(number);
+    return modem.callNumber(number);
 }
 
 void wakeModem()
@@ -86,58 +100,74 @@ void wakeModem()
     delay(MODEM_POWERON_PULSE_WIDTH_MS);
     digitalWrite(BOARD_PWRKEY_PIN, LOW);
     delay(10000);
+    configureAudio();
 }
 
 void checkCallStatus()
 {
-    while (SerialAT.available())
+    if (millis() - lastCallPoll < 1000)
     {
-        modemResponse += (char)SerialAT.read();
-
-        if (modemResponse.indexOf("VOICE CALL: END: 000001") >= 0)
-        {
-            Serial.println("Call ended.");
-            modem.poweroff();
-            delay(5000); // wait for modem to power off
-            analogWrite(LED_PIN, 0); // Turn off LED
-            isButtonPressed = false;
-            modemResponse = "";
-            return;
-        }
-
-        if (modemResponse.length() > 64)
-        {
-            modemResponse.remove(0, modemResponse.length() - 32);
-        }
+        return;
     }
+    lastCallPoll = millis();
+
+    modem.sendAT("+CLCC");
+    String response;
+    if (modem.waitResponse(1500, response) != 1)
+    {
+        return; // A failed query is not evidence that the call ended.
+    }
+
+    if (response.indexOf("+CLCC:") >= 0)
+    {
+        activeCallSeen = true;
+        emptyCallPolls = 0;
+        return;
+    }
+
+    if (!activeCallSeen)
+    {
+        return; // The modem can report an empty list while the call is ringing.
+    }
+
+    if (++emptyCallPolls < 2)
+    {
+        return;
+    }
+
+    Serial.println("Call ended.");
+    modem.poweroff();
+    delay(5000); // wait for modem to power off
+    analogWrite(LED_PIN, 0); // Turn off LED
+    callInProgress = false;
+    emptyCallPolls = 0;
 }
 
 void loop()
 {
 
-    if (digitalRead(BUTTON_PIN) == LOW)
+    bool buttonPressed = digitalRead(BUTTON_PIN) == LOW;
+    if (buttonPressed && !buttonWasPressed && !callInProgress)
     {
-        if (!isButtonPressed)
+        analogWrite(LED_PIN, 30); // 30 out of 255 restricts the brightness to not burn LED
+        Serial.println("Waking modem and dialing...");
+        wakeModem();
+        callInProgress = makeCall();
+        activeCallSeen = false;
+        emptyCallPolls = 0;
+        lastCallPoll = millis();
+        if (!callInProgress)
         {
-            analogWrite(LED_PIN, 30); // 30 out of 255 restricts the brightness to not burn LED
-            Serial.println("Waking modem and dialing...");
-            wakeModem();
-            makeCall();
-            isButtonPressed = true;
+            modem.poweroff();
+            delay(5000);
+            analogWrite(LED_PIN, 0);
         }
     }
+    buttonWasPressed = buttonPressed;
 
-    if (isButtonPressed)
+    if (callInProgress)
     {
         checkCallStatus();
-    }
-    if (SerialAT.available())
-    {
-        Serial.write(SerialAT.read());
-    }
-    if (Serial.available())
-    {
-        SerialAT.write(Serial.read());
     }
     delay(1);
 }
