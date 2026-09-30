@@ -131,4 +131,13 @@ void loop()
     {
         checkCallStatus();
     }
+    if (SerialAT.available())
+    {
+        Serial.write(SerialAT.read());
+    }
+    if (Serial.available())
+    {
+        SerialAT.write(Serial.read());
+    }
+    delay(1);
 }
